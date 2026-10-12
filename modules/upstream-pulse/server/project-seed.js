@@ -18,8 +18,9 @@ function projectKey(githubOrg, githubRepo) {
 
 async function fetchJson(url, options) {
   const response = await fetch(url, {
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT),
     ...options,
+    // Last so a caller-provided signal cannot silently drop the timeout.
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT),
   });
   const body = await response.json().catch(function() { return {}; });
   return { response, body };
@@ -44,6 +45,12 @@ async function createProject(baseUrl, headers, seed) {
   if (!response.ok) {
     throw new Error('create failed (' + response.status + '): ' + (body.error || 'unknown'));
   }
+  // Job queuing is best-effort on the backend: a 200 can come back without a
+  // collection job (collection: null + jobErrors). Queue one ourselves so the
+  // project does not sit uncollected until some later run notices it.
+  if (body.project && !body.collection) {
+    await backfillProject(baseUrl, headers, body.project.id);
+  }
   return 'created';
 }
 
@@ -56,6 +63,25 @@ async function backfillProject(baseUrl, headers, projectId) {
   if (!response.ok) {
     throw new Error('backfill failed (' + response.status + '): ' + (body.error || 'unknown'));
   }
+}
+
+/**
+ * Project IDs with a collection job already pending or running. Re-queueing a
+ * full-history backfill while one is still in flight would duplicate the
+ * backend's GitHub work (lastSyncAt only advances when a job completes).
+ */
+async function getInFlightProjectIds(baseUrl, headers) {
+  const { response, body } = await fetchJson(baseUrl + '/api/system/status', { headers });
+  if (!response.ok) {
+    throw new Error('failed to fetch system status (' + response.status + '): ' + (body.error || 'unknown'));
+  }
+  const inFlight = new Set();
+  for (const job of body.recentJobs || []) {
+    if ((job.status === 'pending' || job.status === 'running') && job.projectId) {
+      inFlight.add(job.projectId);
+    }
+  }
+  return inFlight;
 }
 
 /**
@@ -75,6 +101,9 @@ async function ensureProjectsSeeded({ baseUrl, headers = {} }) {
     })
   );
 
+  // Fetched lazily: only needed when a tracked project has never been collected.
+  let inFlightProjectIds = null;
+
   const summary = { created: [], alreadyTracked: [], backfilled: [], errors: [] };
 
   for (const seed of SEED_PROJECTS) {
@@ -91,10 +120,16 @@ async function ensureProjectsSeeded({ baseUrl, headers = {} }) {
       }
       summary.alreadyTracked.push(key);
       // Already tracked but never collected (e.g. registered before this seed
-      // existed): trigger a one-time full-history backfill.
+      // existed): trigger a one-time full-history backfill — unless a
+      // collection job is already in flight for it.
       if (!match.lastSyncAt) {
-        await backfillProject(baseUrl, headers, match.id);
-        summary.backfilled.push(key);
+        if (inFlightProjectIds === null) {
+          inFlightProjectIds = await getInFlightProjectIds(baseUrl, headers);
+        }
+        if (!inFlightProjectIds.has(match.id)) {
+          await backfillProject(baseUrl, headers, match.id);
+          summary.backfilled.push(key);
+        }
       }
     } catch (err) {
       summary.errors.push({ project: key, error: err.message });
@@ -106,4 +141,4 @@ async function ensureProjectsSeeded({ baseUrl, headers = {} }) {
   return summary;
 }
 
-module.exports = { SEED_PROJECTS, ensureProjectsSeeded };
+module.exports = { SEED_PROJECTS, REQUEST_TIMEOUT, ensureProjectsSeeded };

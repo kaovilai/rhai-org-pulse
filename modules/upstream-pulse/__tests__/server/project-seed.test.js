@@ -37,7 +37,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function mockBackend({ projects = [], createStatus = 200, createFailFor = [] } = {}) {
+function mockBackend({ projects = [], createStatus = 200, createFailFor = [], createWithoutCollectionJob = [], recentJobs = [] } = {}) {
   fetchMock.mockImplementation(async (url, options = {}) => {
     const method = options.method || 'GET'
     if (url === BASE + '/api/projects' && method === 'GET') {
@@ -52,7 +52,15 @@ function mockBackend({ projects = [], createStatus = 200, createFailFor = [] } =
       if (createStatus === 409) {
         return jsonResponse(409, { error: 'This repository is already being tracked' })
       }
-      return jsonResponse(200, { success: true, project: { ...body, id: 'new-' + key } })
+      return jsonResponse(200, {
+        success: true,
+        project: { ...body, id: 'new-' + key },
+        // Job queuing is best-effort on the backend; simulate it being skipped.
+        collection: createWithoutCollectionJob.includes(key) ? null : { jobId: 'job-' + key },
+      })
+    }
+    if (url === BASE + '/api/system/status' && method === 'GET') {
+      return jsonResponse(200, { recentJobs })
     }
     if (url === BASE + '/api/admin/collect' && method === 'POST') {
       return jsonResponse(200, { success: true, jobId: 'job-1' })
@@ -199,5 +207,42 @@ describe('ensureProjectsSeeded', () => {
 
     await expect(ensureProjectsSeeded({ baseUrl: BASE, headers: HEADERS }))
       .rejects.toThrow('failed to list projects (503): unavailable')
+  })
+
+  it('queues collection itself when creation returns without a collection job', async () => {
+    mockBackend({ projects: [], createWithoutCollectionJob: ['velero-io/velero'] })
+
+    const result = await ensureProjectsSeeded({ baseUrl: BASE, headers: HEADERS })
+
+    expect(result.seeded).toBe(true)
+    expect(result.created).toEqual(seedKeys())
+    expect(collectBodies()).toEqual([{ projectId: 'new-velero-io/velero', fullHistory: true }])
+  })
+
+  it('does not re-queue backfill while a collection job is in flight', async () => {
+    const neverCollected = existingProject(SEED_PROJECTS[0], { lastSyncAt: null })
+    mockBackend({
+      projects: [neverCollected],
+      recentJobs: [{ projectId: neverCollected.id, jobType: 'sync', status: 'running' }],
+    })
+
+    const result = await ensureProjectsSeeded({ baseUrl: BASE, headers: HEADERS })
+
+    expect(result.alreadyTracked).toEqual(['velero-io/velero'])
+    expect(result.backfilled).toEqual([])
+    expect(collectBodies()).toEqual([])
+  })
+
+  it('re-queues backfill when the in-flight job has finished without syncing', async () => {
+    const neverCollected = existingProject(SEED_PROJECTS[0], { lastSyncAt: null })
+    mockBackend({
+      projects: [neverCollected],
+      recentJobs: [{ projectId: neverCollected.id, jobType: 'sync', status: 'failed' }],
+    })
+
+    const result = await ensureProjectsSeeded({ baseUrl: BASE, headers: HEADERS })
+
+    expect(result.backfilled).toEqual(['velero-io/velero'])
+    expect(collectBodies()).toEqual([{ projectId: 'id-velero', fullHistory: true }])
   })
 })

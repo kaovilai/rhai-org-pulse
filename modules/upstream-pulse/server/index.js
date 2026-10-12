@@ -1,5 +1,5 @@
 const { getAllPeople } = require('../../../shared/server/roster');
-const { ensureProjectsSeeded } = require('./project-seed');
+const { SEED_PROJECTS, REQUEST_TIMEOUT, ensureProjectsSeeded } = require('./project-seed');
 
 const DEFAULT_BASE_URL = 'http://backend.ambient-code--upstream-pulse.svc.cluster.local:3000';
 const PROXY_TIMEOUT = 90_000;
@@ -801,8 +801,9 @@ module.exports = function registerRoutes(router, context) {
   if (context.registerRefresh) {
     context.registerRefresh('project-seed', {
       order: 95,
-      // Above ensureProjectsSeeded's worst case: 9 sequential requests x 90s cap.
-      timeout: 900000,
+      // Worst case: list + status + up to two requests per seed project
+      // (create + collection fallback), each capped at REQUEST_TIMEOUT.
+      timeout: (2 * SEED_PROJECTS.length + 2) * REQUEST_TIMEOUT,
       cadence: '24h',
       description: 'Registers seed-listed upstream repositories in the upstream-pulse backend and starts full-history collection for missing ones.',
       handler: runProjectSeed
