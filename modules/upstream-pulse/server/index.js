@@ -1,4 +1,5 @@
 const { getAllPeople } = require('../../../shared/server/roster');
+const { ensureProjectsSeeded } = require('./project-seed');
 
 const DEFAULT_BASE_URL = 'http://backend.ambient-code--upstream-pulse.svc.cluster.local:3000';
 const PROXY_TIMEOUT = 90_000;
@@ -749,6 +750,64 @@ module.exports = function registerRoutes(router, context) {
       res.status(502).json({ error: 'Roster push failed', message: err.message });
     }
   });
+
+  // ── Project seed (declarative upstream repository registration) ──
+
+  async function runProjectSeed() {
+    if (DEMO_MODE) return { status: 'skipped', reason: 'demo_mode' };
+    const result = await ensureProjectsSeeded({
+      baseUrl: getBaseUrl(),
+      headers: getServiceIdentityHeaders()
+    });
+    // New projects change the project/org/dashboard reads served from cache.
+    for (const key of responseCache.keys()) {
+      if (key.startsWith('/api/projects') || key.startsWith('/api/orgs') || key.startsWith('/api/metrics/dashboard')) {
+        responseCache.delete(key);
+      }
+    }
+    // Propagate partial failures so the refresh registry records the handler
+    // as failed (retrying on the next tick) instead of silently succeeding.
+    if (!result.seeded) {
+      throw new Error('seed completed with errors: ' + JSON.stringify(result.errors));
+    }
+    return result;
+  }
+
+  /**
+   * @openapi
+   * /api/modules/upstream-pulse/project-seed:
+   *   post:
+   *     tags: [Upstream Pulse]
+   *     summary: Register seed-listed upstream repositories
+   *     description: >
+   *       Creates any seed-listed repositories that are not yet tracked (with
+   *       full-history collection) and backfills existing ones that have never
+   *       been collected. Idempotent — already-tracked repositories are skipped.
+   *     responses:
+   *       200:
+   *         description: Seed summary (created, alreadyTracked, backfilled, errors)
+   *       502:
+   *         description: Upstream Pulse backend unreachable
+   */
+  router.post('/project-seed', requireAdmin, requireScope('upstream-pulse:write'), async function(req, res) {
+    try {
+      res.json(await runProjectSeed());
+    } catch (err) {
+      console.error('[upstream-pulse] Manual project seed failed:', err.message);
+      res.status(502).json({ error: 'Project seed failed', message: err.message });
+    }
+  });
+
+  if (context.registerRefresh) {
+    context.registerRefresh('project-seed', {
+      order: 95,
+      // Above ensureProjectsSeeded's worst case: 9 sequential requests x 90s cap.
+      timeout: 900000,
+      cadence: '24h',
+      description: 'Registers seed-listed upstream repositories in the upstream-pulse backend and starts full-history collection for missing ones.',
+      handler: runProjectSeed
+    });
+  }
 
   // Start periodic roster push (checks registry.json for changes)
   startPeriodicRosterPush(context.storage);

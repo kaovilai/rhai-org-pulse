@@ -34,7 +34,7 @@ describe('upstream-pulse server module', () => {
     expect(paths).toHaveLength(11)
   })
 
-  it('registers admin POST routes for projects and roster-push', () => {
+  it('registers admin POST routes for projects, roster-push, and project-seed', () => {
     const postCalls = []
     const router = {
       get: vi.fn(),
@@ -44,12 +44,25 @@ describe('upstream-pulse server module', () => {
     const requireAdmin = vi.fn()
     registerRoutes(router, { registerDiagnostics: vi.fn(), registerScopes: vi.fn(), registerRole: vi.fn(), requireAdmin, requireRole: vi.fn(() => vi.fn()), requireScope: () => (req, res, next) => next(), storage: { readFromStorage: vi.fn().mockResolvedValue(null) } })
 
-    expect(postCalls).toHaveLength(3)
+    expect(postCalls).toHaveLength(4)
     expect(postCalls.map(c => c.path)).toContain('/orgs')
     expect(postCalls.map(c => c.path)).toContain('/projects')
     expect(postCalls.map(c => c.path)).toContain('/roster-push')
+    expect(postCalls.map(c => c.path)).toContain('/project-seed')
     expect(router.post).toHaveBeenCalledWith('/projects', requireAdmin, expect.any(Function), expect.any(Function))
     expect(router.post).toHaveBeenCalledWith('/roster-push', requireAdmin, expect.any(Function), expect.any(Function))
+    expect(router.post).toHaveBeenCalledWith('/project-seed', requireAdmin, expect.any(Function), expect.any(Function))
+  })
+
+  it('registers project-seed refresh handler', () => {
+    const router = { get: vi.fn(), post: vi.fn(), patch: vi.fn() }
+    const registerRefresh = vi.fn()
+    registerRoutes(router, { registerDiagnostics: vi.fn(), registerScopes: vi.fn(), registerRole: vi.fn(), requireAdmin: vi.fn(), requireRole: vi.fn(() => vi.fn()), requireScope: () => (req, res, next) => next(), registerRefresh, storage: { readFromStorage: vi.fn().mockResolvedValue(null) } })
+
+    expect(registerRefresh).toHaveBeenCalledWith('project-seed', expect.objectContaining({
+      cadence: '24h',
+      handler: expect.any(Function),
+    }))
   })
 
   it('gates repo-info behind requireAdmin', () => {

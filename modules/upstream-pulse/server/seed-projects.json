@@ -1,0 +1,10 @@
+[
+  { "name": "Velero", "githubOrg": "velero-io", "githubRepo": "velero", "ecosystem": "Velero" },
+  { "name": "Velero Plugin for AWS", "githubOrg": "velero-io", "githubRepo": "velero-plugin-for-aws", "ecosystem": "Velero" },
+  { "name": "Velero Plugin for GCP", "githubOrg": "velero-io", "githubRepo": "velero-plugin-for-gcp", "ecosystem": "Velero" },
+  { "name": "Velero Plugin for Microsoft Azure", "githubOrg": "velero-io", "githubRepo": "velero-plugin-for-microsoft-azure", "ecosystem": "Velero" },
+  { "name": "Kopia (Broadcom)", "githubOrg": "broadcom", "githubRepo": "kopia", "ecosystem": "Kopia" },
+  { "name": "Kopia", "githubOrg": "kopia", "githubRepo": "kopia", "ecosystem": "Kopia" },
+  { "name": "Restic", "githubOrg": "restic", "githubRepo": "restic", "ecosystem": "Restic" },
+  { "name": "File Browser", "githubOrg": "filebrowser", "githubRepo": "filebrowser", "ecosystem": "File Browser" }
+]

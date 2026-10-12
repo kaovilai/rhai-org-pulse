@@ -107,6 +107,30 @@ test.describe('Upstream Pulse Module @upstream-pulse', () => {
 });
 
 /**
+ * Project Seed API
+ *
+ * The seed endpoint registers the checked-in upstream repository list with the
+ * upstream-pulse backend. In demo mode it must short-circuit cleanly instead
+ * of contacting the (absent) external service; in authenticated deployments
+ * the admin gate applies.
+ */
+test.describe('Upstream Pulse Project Seed API @upstream-pulse', () => {
+  test('POST /project-seed is demo-mode guarded or auth-gated', async ({ request }) => {
+    const res = await request.post('/api/modules/upstream-pulse/project-seed');
+
+    if (res.status() === 200) {
+      // Demo mode guard short-circuits before contacting the external backend
+      const body = await res.json();
+      expect(body.status).toBe('skipped');
+      expect(body.reason).toBe('demo_mode');
+    } else {
+      // Admin endpoint — no authenticated user in CI containers
+      expect([401, 403]).toContain(res.status());
+    }
+  });
+});
+
+/**
  * Disabled Menu Items
  *
  * Verify that Upstream Pulse module has no disabled menu items.

@@ -31,6 +31,6 @@
       }
     ]
   },
-  "defaultEnabled": false,
+  "defaultEnabled": true,
   "requires": []
 }
